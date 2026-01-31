@@ -7,7 +7,7 @@ import type { LocaleDirection } from '../../app/locale.node.js';
 import type {
   ICUJSXMessageParamsByKeyType,
   ICUStringMessageParamsByKeyType,
-} from '../../build/ICUMessageParams.d.ts';
+} from '../../build/ICUMessageParams';
 
 import type { HourCyclePreference, LocaleMessagesType } from './I18N.std.js';
 

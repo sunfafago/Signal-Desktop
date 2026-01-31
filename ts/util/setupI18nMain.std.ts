@@ -143,18 +143,18 @@ export function setupI18n(
     key: Key,
     substitutions: ICUStringMessageParamsByKeyType[Key],
     options?: LocalizerOptions
-  ) => {
+  ): string => {
     const result = intl.formatMessage(
-      { id: key },
+      { id: key as string },
       normalizeSubstitutions(substitutions, options)
-    );
+    ) as string;
 
-    usedStrings?.set(key, result);
+    usedStrings?.set(key as string, result);
 
-    strictAssert(result !== key, `i18n: missing translation for "${key}"`);
+    strictAssert(result !== (key as string), `i18n: missing translation for "${String(key)}"`);
 
     return result;
-  }) as LocalizerType;
+  }) as unknown as LocalizerType;
 
   localizer.getIntl = () => {
     return intl;

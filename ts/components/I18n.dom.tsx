@@ -31,5 +31,5 @@ export function I18n<Key extends keyof ICUJSXMessageParamsByKeyType>({
 }: Props<Key>): React.JSX.Element | null {
   strictAssert(id != null, 'Error: <I18n> id prop not provided');
   const intl = localizer.getIntl();
-  return <>{intl.formatMessage({ id }, components, {})}</>;
+  return <>{intl.formatMessage({ id: id as string }, components, {})}</>;
 }

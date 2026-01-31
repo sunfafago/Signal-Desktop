@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from 'react';
+import type { I18nComponentParts } from '../I18n.dom.js';
 import { I18n } from '../I18n.dom.js';
 import type { LocalizerType } from '../../types/Util.std.js';
 
@@ -25,7 +26,7 @@ export function GroupV1DisabledActions({
           components={{
             // This is a render prop, not a component
             // eslint-disable-next-line react/no-unstable-nested-components
-            learnMoreLink: parts => {
+            learnMoreLink: (parts: I18nComponentParts) => {
               return (
                 <a
                   href="https://support.signal.org/hc/articles/360007319331"

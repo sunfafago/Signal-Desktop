@@ -1250,7 +1250,7 @@ function DirectConversationWithSameTitleWarning(props: {
         components={{
           // This is a render props, not a component
           // eslint-disable-next-line react/no-unstable-nested-components
-          reviewRequestLink: parts => (
+          reviewRequestLink: (parts: I18nComponentParts) => (
             <TimelineWarningLink
               onClick={props.reviewConversationNameCollision}
             >
