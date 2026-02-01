@@ -478,6 +478,7 @@ async function startApp(): Promise<void> {
 
     backupReady.reject(new Error('startRegistration'));
     backupReady = explodePromise();
+    backupReady.promise.catch(() => {});
     registrationCompleted = explodePromise();
   });
 
@@ -1684,6 +1685,8 @@ async function startApp(): Promise<void> {
   }
 
   let backupReady = explodePromise<{ wasBackupImported: boolean }>();
+  // Prevent unhandled rejection when user starts registration before any consumer awaits
+  backupReady.promise.catch(() => {});
   let registrationCompleted: ExplodePromiseResultType<void> | undefined;
   let authSocketConnectCount = 0;
   let afterAuthSocketConnectPromise: ExplodePromiseResultType<void> | undefined;
@@ -3453,6 +3456,7 @@ async function startApp(): Promise<void> {
 
       backupReady.reject(new Error('Aborted'));
       backupReady = explodePromise();
+      backupReady.promise.catch(() => {});
 
       await logout();
       await waitForAllBatchers();

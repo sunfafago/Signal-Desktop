@@ -484,7 +484,7 @@ async function _promiseAjax<Type extends ResponseType, OutputShape>(
     }
     log.warn(logId, 0, 'Error');
     const stack = `${e.stack}\nInitial stack:\n${options.stack}`;
-    throw makeHTTPError('promiseAjax catch', 0, {}, e.toString(), stack);
+    throw makeHTTPError('promiseAjax catch', 0, {}, e.toString(), stack, e);
   }
 
   const urlHostname = getHostname(url);
@@ -528,7 +528,9 @@ async function _promiseAjax<Type extends ResponseType, OutputShape>(
   // oxlint-disable-next-line typescript/no-redundant-type-constituents
   let result: string | Uint8Array<ArrayBuffer> | Readable | unknown;
   try {
-    if (DEBUG && !isSuccess(response.status)) {
+    if (response.status === 304) {
+      result = '';
+    } else if (DEBUG && !isSuccess(response.status)) {
       result = await response.text();
       // oxlint-disable-next-line no-console
       console.error(result);
@@ -735,13 +737,15 @@ function makeHTTPError(
   providedCode: number,
   headers: HeaderListType,
   response: unknown,
-  stack?: string
+  stack?: string,
+  cause?: unknown
 ) {
   return new HTTPError(message, {
     code: providedCode,
     headers: makeKeysLowercase(headers),
     response,
     stack,
+    cause,
   });
 }
 
