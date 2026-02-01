@@ -800,54 +800,60 @@ export function Preferences({
             </div>
           </FlowingControl>
         </SettingsRow>
-        <SettingsRow title={i18n('icu:Preferences--system')}>
-          {isAutoLaunchSupported && (
-            <Checkbox
-              checked={hasAutoLaunch}
-              disabled={hasAutoLaunch === undefined}
-              label={i18n('icu:autoLaunchDescription')}
-              moduleClassName="Preferences__checkbox"
-              name="autoLaunch"
-              onChange={onAutoLaunchChange}
-            />
-          )}
-          {isHideMenuBarSupported && (
-            <Checkbox
-              checked={hasHideMenuBar}
-              label={i18n('icu:hideMenuBar')}
-              moduleClassName="Preferences__checkbox"
-              name="hideMenuBar"
-              onChange={onHideMenuBarChange}
-            />
-          )}
-          {isSystemTraySupported && (
-            <>
+        {(isAutoLaunchSupported ||
+          isHideMenuBarSupported ||
+          isSystemTraySupported) && (
+          <SettingsRow title={i18n('icu:Preferences--system')}>
+            {isAutoLaunchSupported && (
               <Checkbox
-                checked={hasMinimizeToSystemTray}
-                disabled={hasMinimizeToSystemTray === undefined}
-                label={i18n('icu:SystemTraySetting__minimize-to-system-tray')}
+                checked={hasAutoLaunch}
+                disabled={hasAutoLaunch === undefined}
+                label={i18n('icu:autoLaunchDescription')}
                 moduleClassName="Preferences__checkbox"
-                name="system-tray-setting-minimize-to-system-tray"
-                onChange={onMinimizeToSystemTrayChange}
+                name="autoLaunch"
+                onChange={onAutoLaunchChange}
               />
-              {isMinimizeToAndStartInSystemTraySupported && (
+            )}
+            {isHideMenuBarSupported && (
+              <Checkbox
+                checked={hasHideMenuBar}
+                label={i18n('icu:hideMenuBar')}
+                moduleClassName="Preferences__checkbox"
+                name="hideMenuBar"
+                onChange={onHideMenuBarChange}
+              />
+            )}
+            {isSystemTraySupported && (
+              <>
                 <Checkbox
-                  checked={hasMinimizeToAndStartInSystemTray}
-                  disabled={
-                    !hasMinimizeToSystemTray ||
-                    hasMinimizeToAndStartInSystemTray === undefined
-                  }
+                  checked={hasMinimizeToSystemTray}
+                  disabled={hasMinimizeToSystemTray === undefined}
                   label={i18n(
-                    'icu:SystemTraySetting__minimize-to-and-start-in-system-tray'
+                    'icu:SystemTraySetting__minimize-to-system-tray'
                   )}
                   moduleClassName="Preferences__checkbox"
-                  name="system-tray-setting-minimize-to-and-start-in-system-tray"
-                  onChange={onMinimizeToAndStartInSystemTrayChange}
+                  name="system-tray-setting-minimize-to-system-tray"
+                  onChange={onMinimizeToSystemTrayChange}
                 />
-              )}
-            </>
-          )}
-        </SettingsRow>
+                {isMinimizeToAndStartInSystemTraySupported && (
+                  <Checkbox
+                    checked={hasMinimizeToAndStartInSystemTray}
+                    disabled={
+                      !hasMinimizeToSystemTray ||
+                      hasMinimizeToAndStartInSystemTray === undefined
+                    }
+                    label={i18n(
+                      'icu:SystemTraySetting__minimize-to-and-start-in-system-tray'
+                    )}
+                    moduleClassName="Preferences__checkbox"
+                    name="system-tray-setting-minimize-to-and-start-in-system-tray"
+                    onChange={onMinimizeToAndStartInSystemTrayChange}
+                  />
+                )}
+              </>
+            )}
+          </SettingsRow>
+        )}
         <SettingsRow title={i18n('icu:permissions')}>
           <Checkbox
             checked={hasMediaPermissions}

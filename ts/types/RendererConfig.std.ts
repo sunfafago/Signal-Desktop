@@ -82,6 +82,9 @@ export const rendererConfigSchema = z.object({
   isMainWindowFullScreen: z.boolean(),
   isMainWindowMaximized: z.boolean(),
 
+  // Embedded in host app (e.g. Zeus): hide system tray / auto-launch / menu bar / auto-update in General preferences
+  isEmbedded: z.boolean().optional(),
+
   // Only for tests
   argv: configOptionalStringSchema,
 });

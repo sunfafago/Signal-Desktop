@@ -309,17 +309,24 @@ export function SmartPreferences(): React.JSX.Element | null {
   const initialSpellCheckSetting =
     window.SignalContext.config.appStartInitialSpellcheckSetting;
 
-  // Settings - these capabilities are unchanging
-
-  const isAutoDownloadUpdatesSupported =
-    Settings.isAutoDownloadUpdatesSupported(OS, version);
-  const isAutoLaunchSupported = Settings.isAutoLaunchSupported(OS);
-  const isHideMenuBarSupported = Settings.isHideMenuBarSupported(OS);
-  const isMinimizeToAndStartInSystemTraySupported =
-    Settings.isMinimizeToAndStartInSystemTraySupported(OS);
+  const isEmbedded = window.SignalContext.config.isEmbedded === true;
+  const isAutoDownloadUpdatesSupported = isEmbedded
+    ? false
+    : Settings.isAutoDownloadUpdatesSupported(OS, version);
+  const isAutoLaunchSupported = isEmbedded
+    ? false
+    : Settings.isAutoLaunchSupported(OS);
+  const isHideMenuBarSupported = isEmbedded
+    ? false
+    : Settings.isHideMenuBarSupported(OS);
+  const isMinimizeToAndStartInSystemTraySupported = isEmbedded
+    ? false
+    : Settings.isMinimizeToAndStartInSystemTraySupported(OS);
   const isNotificationAttentionSupported =
     Settings.isDrawAttentionSupported(OS);
-  const isSystemTraySupported = Settings.isSystemTraySupported(OS);
+  const isSystemTraySupported = isEmbedded
+    ? false
+    : Settings.isSystemTraySupported(OS);
 
   // Textsecure - user can change number and change this device's name
 
