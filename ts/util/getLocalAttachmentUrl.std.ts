@@ -41,10 +41,20 @@ export function getLocalAttachmentUrl(
   {
     disposition = AttachmentDisposition.Attachment,
   }: GetLocalAttachmentUrlOptionsType = {}
-): string {
+): string | undefined {
   let { path } = attachment;
 
   if (disposition === AttachmentDisposition.Download) {
+    const hasRequired =
+      attachment.key &&
+      attachment.digest &&
+      attachment.incrementalMac &&
+      isNumber(attachment.chunkSize);
+    if (!hasRequired) {
+      // Legacy or incomplete download metadata (e.g. missing digest); return
+      // undefined so UI does not crash and no CSP-violating URL is used.
+      return undefined;
+    }
     strictAssert(
       attachment.incrementalMac && attachment.chunkSize,
       'To view downloads, must have incrementalMac/chunkSize'

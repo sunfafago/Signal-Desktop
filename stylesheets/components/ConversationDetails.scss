@@ -315,6 +315,15 @@
             opacity: 1;
           }
         }
+
+        // When actions are rendered outside the button (to avoid button-in-button),
+        // the root is a wrapper div and the clickable part is __root--button-inner.
+        // Inner button when actions are outside (avoids button-in-button)
+        & .ConversationDetails-panel-row__root--button-inner {
+          flex: 1;
+          min-width: 0;
+          text-align: start;
+        }
       }
 
       &:focus {

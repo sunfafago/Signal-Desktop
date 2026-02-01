@@ -34,7 +34,7 @@ export const PanelRow = React.forwardRef<HTMLButtonElement, Props>(
     }: Props,
     ref: React.Ref<HTMLButtonElement>
   ) {
-    const content = (
+    const mainContent = (
       <>
         {icon !== undefined ? <div className={bem('icon')}>{icon}</div> : null}
         <div className={bem('label')}>
@@ -46,15 +46,35 @@ export const PanelRow = React.forwardRef<HTMLButtonElement, Props>(
         {right !== undefined ? (
           <div className={bem('right')}>{right}</div>
         ) : null}
-        {actions !== undefined ? (
-          <div className={alwaysShowActions ? '' : bem('actions')}>
-            {actions}
-          </div>
-        ) : null}
       </>
     );
 
+    const actionsContent =
+      actions !== undefined ? (
+        <div className={alwaysShowActions ? '' : bem('actions')}>
+          {actions}
+        </div>
+      ) : null;
+
     if (onClick) {
+      // When we have both onClick and actions, render actions outside the
+      // button to avoid invalid DOM nesting (e.g. ContextMenu renders a button).
+      if (actionsContent) {
+        return (
+          <div className={classNames(bem('root', 'button'), className)}>
+            <button
+              disabled={disabled}
+              type="button"
+              className={bem('root', 'button-inner')}
+              onClick={onClick}
+              ref={ref}
+            >
+              {mainContent}
+            </button>
+            {actionsContent}
+          </div>
+        );
+      }
       return (
         <button
           disabled={disabled}
@@ -63,11 +83,17 @@ export const PanelRow = React.forwardRef<HTMLButtonElement, Props>(
           onClick={onClick}
           ref={ref}
         >
-          {content}
+          {mainContent}
+          {actionsContent}
         </button>
       );
     }
 
-    return <div className={classNames(bem('root'), className)}>{content}</div>;
+    return (
+      <div className={classNames(bem('root'), className)}>
+        {mainContent}
+        {actionsContent}
+      </div>
+    );
   }
 );

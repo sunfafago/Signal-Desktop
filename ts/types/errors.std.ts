@@ -7,7 +7,15 @@ export function toLogFormat(error: unknown): string {
   let result = '';
 
   if (error instanceof HTTPError) {
-    return `HTTPError ${error.code}`;
+    result = `HTTPError ${error.code}`;
+    if (error.cause !== undefined && error.cause !== null) {
+      const c = error.cause;
+      result += `\nCaused by: ${c instanceof Error ? c.message : String(c)}`;
+      if (c instanceof Error && 'code' in c && typeof (c as NodeJS.ErrnoException).code === 'string') {
+        result += ` (code: ${(c as NodeJS.ErrnoException).code})`;
+      }
+    }
+    return result;
   }
 
   if (error instanceof Error && error.stack) {
