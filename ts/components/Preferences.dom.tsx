@@ -197,6 +197,7 @@ export type PropsDataType = {
   isSystemTraySupported: boolean;
   isMinimizeToAndStartInSystemTraySupported: boolean;
   isInternalUser: boolean;
+  isEmbedded?: boolean;
 
   // Devices
   availableCameras: Array<
@@ -542,11 +543,19 @@ export function Preferences({
   __dangerouslyRunAbitraryReadOnlySqlQuery,
   callQualitySurveyCooldownDisabled,
   setCallQualitySurveyCooldownDisabled,
+  isEmbedded = false,
 }: PropsType): React.JSX.Element {
   const storiesId = useId();
   const themeSelectId = useId();
   const zoomSelectId = useId();
   const languageId = useId();
+
+  // When embedded (e.g. Zeus), donations menu is hidden; redirect to General if on Donations page
+  useEffect(() => {
+    if (isEmbedded && isDonationsPage(settingsLocation.page)) {
+      setSettingsLocation({ page: SettingsPage.General });
+    }
+  }, [isEmbedded, settingsLocation.page, setSettingsLocation]);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmStoriesOff, setConfirmStoriesOff] = useState(false);
@@ -892,7 +901,7 @@ export function Preferences({
         title={i18n('icu:Preferences__button--general')}
       />
     );
-  } else if (isDonationsPage(settingsLocation.page)) {
+  } else if (isDonationsPage(settingsLocation.page) && !isEmbedded) {
     content = renderDonationsPane({
       contentsRef: settingsPaneRef,
       settingsLocation,
@@ -2522,21 +2531,23 @@ export function Preferences({
                   {i18n('icu:Preferences__button--backups')}
                 </button>
               ) : null}
-              <button
-                type="button"
-                className={classNames({
-                  Preferences__button: true,
-                  'Preferences__button--donations': true,
-                  'Preferences__button--selected': isDonationsPage(
-                    settingsLocation.page
-                  ),
-                })}
-                onClick={() =>
-                  setSettingsLocation({ page: SettingsPage.Donations })
-                }
-              >
-                {i18n('icu:Preferences__button--donate')}
-              </button>
+              {!isEmbedded ? (
+                <button
+                  type="button"
+                  className={classNames({
+                    Preferences__button: true,
+                    'Preferences__button--donations': true,
+                    'Preferences__button--selected': isDonationsPage(
+                      settingsLocation.page
+                    ),
+                  })}
+                  onClick={() =>
+                    setSettingsLocation({ page: SettingsPage.Donations })
+                  }
+                >
+                  {i18n('icu:Preferences__button--donate')}
+                </button>
+              ) : null}
               {isInternalUser ? (
                 <button
                   type="button"

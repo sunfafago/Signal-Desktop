@@ -881,6 +881,7 @@ export function SmartPreferences(): React.JSX.Element | null {
           isSyncSupported={isSyncSupported}
           isSystemTraySupported={isSystemTraySupported}
           isInternalUser={isInternalUser}
+          isEmbedded={isEmbedded}
           lastSyncTime={lastSyncTime}
           localBackupFolder={localBackupFolder}
           localeOverride={localeOverride}
