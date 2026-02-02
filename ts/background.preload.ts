@@ -1572,6 +1572,10 @@ async function startApp(): Promise<void> {
       );
     }
 
+    if (isCoreDataValid) {
+      pushZeusUserInfo(itemStorage);
+    }
+
     const { activeWindowService } = window.SignalContext;
 
     activeWindowService.registerForActive(() => notificationService.clear());
