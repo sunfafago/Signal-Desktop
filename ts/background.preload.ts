@@ -40,6 +40,7 @@ import { isNotNil } from './util/isNotNil.std.js';
 import { areRemoteBackupsTurnedOn } from './util/isBackupEnabled.preload.js';
 import { lightSessionResetQueue } from './util/lightSessionResetQueue.std.js';
 import { setAppLoadingScreenMessage } from './setAppLoadingScreenMessage.dom.js';
+import { pushZeusUserInfo } from './zeus/zeusEmbed.preload.js';
 import { IdleDetector } from './IdleDetector.preload.js';
 import { challengeHandler } from './services/challengeHandler.preload.js';
 import {
@@ -1233,6 +1234,8 @@ export async function startApp(): Promise<void> {
         regionCode: itemStorage.get('regionCode'),
       });
 
+      pushZeusUserInfo(itemStorage);
+
       if (reconnect) {
         log.info('reconnecting websocket on user change');
         enqueueReconnectToWebSocket();
@@ -1244,6 +1247,9 @@ export async function startApp(): Promise<void> {
     });
 
     addGlobalKeyboardShortcuts();
+
+    // 已登录状态下打开会话时 userChanged 不会触发，在「就绪」时主动推送一次
+    pushZeusUserInfo(itemStorage);
   }
 
   window.Whisper.events.on('setupAsNewDevice', () => {

@@ -48,6 +48,7 @@ import { areWePending } from './util/groupMembershipUtils.preload.js';
 import { conversationJobQueue } from './jobs/conversationJobQueue.preload.js';
 import { createBatcher } from './util/batcher.std.js';
 import { validateConversation } from './util/validateConversation.dom.js';
+import { pushZeusUnreadCount } from './zeus/zeusEmbed.preload.js';
 import { ConversationModel } from './models/conversations.preload.js';
 import { INITIAL_EXPIRE_TIMER_VERSION } from './util/expirationTimer.std.js';
 import { missingCaseError } from './util/missingCaseError.std.js';
@@ -433,6 +434,8 @@ export class ConversationController {
       window.IPC.updateTrayIcon(0);
       window.document.title = window.getTitle();
     }
+
+    pushZeusUnreadCount(unreadStats.unreadCount);
   }
 
   onEmpty(): void {
