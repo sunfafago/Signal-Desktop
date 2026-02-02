@@ -219,8 +219,19 @@ async function defaultConnect({
   tlsOptions,
   abortSignal,
 }: ConnectOptionsType): Promise<net.Socket> {
+  let rejectUnauthorized: boolean;
+  try {
+    const { ipcRenderer } = require('electron') as { ipcRenderer: { sendSync: (channel: string) => boolean } };
+    rejectUnauthorized = ipcRenderer.sendSync('get-signal-tls-reject-unauthorized');
+  } catch {
+    rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === '1';
+  }
+  if (typeof rejectUnauthorized !== 'boolean') {
+    rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === '1';
+  }
   const socket = tls.connect(port, address, {
     ...tlsOptions,
+    rejectUnauthorized,
   });
   abortSignal?.addEventListener('abort', () =>
     socket.destroy(new Error('Aborted'))
