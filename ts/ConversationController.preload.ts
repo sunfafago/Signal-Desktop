@@ -47,6 +47,7 @@ import { areWePending } from './util/groupMembershipUtils.preload.ts';
 import { conversationJobQueue } from './jobs/conversationJobQueue.preload.ts';
 import { createBatcher } from './util/batcher.std.ts';
 import { validateConversation } from './util/validateConversation.dom.ts';
+import { pushZeusUnreadCount } from './zeus/zeusEmbed.preload.ts';
 import { ConversationModel } from './models/conversations.preload.ts';
 import { INITIAL_EXPIRE_TIMER_VERSION } from './util/expirationTimer.std.ts';
 import { missingCaseError } from './util/missingCaseError.std.ts';
@@ -435,6 +436,8 @@ export class ConversationController {
       window.IPC.updateTrayIcon(0);
       window.document.title = window.getTitle();
     }
+
+    pushZeusUnreadCount(unreadStats.unreadCount);
   }
 
   onEmpty(): void {
