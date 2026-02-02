@@ -197,6 +197,7 @@ export type PropsDataType = {
   isSystemTraySupported: boolean;
   isMinimizeToAndStartInSystemTraySupported: boolean;
   isInternalUser: boolean;
+  isEmbedded?: boolean;
 
   // Devices
   availableCameras: Array<
@@ -542,11 +543,19 @@ export function Preferences({
   __dangerouslyRunAbitraryReadOnlySqlQuery,
   callQualitySurveyCooldownDisabled,
   setCallQualitySurveyCooldownDisabled,
+  isEmbedded = false,
 }: PropsType): React.JSX.Element {
   const storiesId = useId();
   const themeSelectId = useId();
   const zoomSelectId = useId();
   const languageId = useId();
+
+  // When embedded (e.g. Zeus), donations menu is hidden; redirect to General if on Donations page
+  useEffect(() => {
+    if (isEmbedded && isDonationsPage(settingsLocation.page)) {
+      setSettingsLocation({ page: SettingsPage.General });
+    }
+  }, [isEmbedded, settingsLocation.page, setSettingsLocation]);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmStoriesOff, setConfirmStoriesOff] = useState(false);
@@ -800,54 +809,60 @@ export function Preferences({
             </div>
           </FlowingControl>
         </SettingsRow>
-        <SettingsRow title={i18n('icu:Preferences--system')}>
-          {isAutoLaunchSupported && (
-            <Checkbox
-              checked={hasAutoLaunch}
-              disabled={hasAutoLaunch === undefined}
-              label={i18n('icu:autoLaunchDescription')}
-              moduleClassName="Preferences__checkbox"
-              name="autoLaunch"
-              onChange={onAutoLaunchChange}
-            />
-          )}
-          {isHideMenuBarSupported && (
-            <Checkbox
-              checked={hasHideMenuBar}
-              label={i18n('icu:hideMenuBar')}
-              moduleClassName="Preferences__checkbox"
-              name="hideMenuBar"
-              onChange={onHideMenuBarChange}
-            />
-          )}
-          {isSystemTraySupported && (
-            <>
+        {(isAutoLaunchSupported ||
+          isHideMenuBarSupported ||
+          isSystemTraySupported) && (
+          <SettingsRow title={i18n('icu:Preferences--system')}>
+            {isAutoLaunchSupported && (
               <Checkbox
-                checked={hasMinimizeToSystemTray}
-                disabled={hasMinimizeToSystemTray === undefined}
-                label={i18n('icu:SystemTraySetting__minimize-to-system-tray')}
+                checked={hasAutoLaunch}
+                disabled={hasAutoLaunch === undefined}
+                label={i18n('icu:autoLaunchDescription')}
                 moduleClassName="Preferences__checkbox"
-                name="system-tray-setting-minimize-to-system-tray"
-                onChange={onMinimizeToSystemTrayChange}
+                name="autoLaunch"
+                onChange={onAutoLaunchChange}
               />
-              {isMinimizeToAndStartInSystemTraySupported && (
+            )}
+            {isHideMenuBarSupported && (
+              <Checkbox
+                checked={hasHideMenuBar}
+                label={i18n('icu:hideMenuBar')}
+                moduleClassName="Preferences__checkbox"
+                name="hideMenuBar"
+                onChange={onHideMenuBarChange}
+              />
+            )}
+            {isSystemTraySupported && (
+              <>
                 <Checkbox
-                  checked={hasMinimizeToAndStartInSystemTray}
-                  disabled={
-                    !hasMinimizeToSystemTray ||
-                    hasMinimizeToAndStartInSystemTray === undefined
-                  }
+                  checked={hasMinimizeToSystemTray}
+                  disabled={hasMinimizeToSystemTray === undefined}
                   label={i18n(
-                    'icu:SystemTraySetting__minimize-to-and-start-in-system-tray'
+                    'icu:SystemTraySetting__minimize-to-system-tray'
                   )}
                   moduleClassName="Preferences__checkbox"
-                  name="system-tray-setting-minimize-to-and-start-in-system-tray"
-                  onChange={onMinimizeToAndStartInSystemTrayChange}
+                  name="system-tray-setting-minimize-to-system-tray"
+                  onChange={onMinimizeToSystemTrayChange}
                 />
-              )}
-            </>
-          )}
-        </SettingsRow>
+                {isMinimizeToAndStartInSystemTraySupported && (
+                  <Checkbox
+                    checked={hasMinimizeToAndStartInSystemTray}
+                    disabled={
+                      !hasMinimizeToSystemTray ||
+                      hasMinimizeToAndStartInSystemTray === undefined
+                    }
+                    label={i18n(
+                      'icu:SystemTraySetting__minimize-to-and-start-in-system-tray'
+                    )}
+                    moduleClassName="Preferences__checkbox"
+                    name="system-tray-setting-minimize-to-and-start-in-system-tray"
+                    onChange={onMinimizeToAndStartInSystemTrayChange}
+                  />
+                )}
+              </>
+            )}
+          </SettingsRow>
+        )}
         <SettingsRow title={i18n('icu:permissions')}>
           <Checkbox
             checked={hasMediaPermissions}
@@ -886,7 +901,7 @@ export function Preferences({
         title={i18n('icu:Preferences__button--general')}
       />
     );
-  } else if (isDonationsPage(settingsLocation.page)) {
+  } else if (isDonationsPage(settingsLocation.page) && !isEmbedded) {
     content = renderDonationsPane({
       contentsRef: settingsPaneRef,
       settingsLocation,
@@ -2516,21 +2531,23 @@ export function Preferences({
                   {i18n('icu:Preferences__button--backups')}
                 </button>
               ) : null}
-              <button
-                type="button"
-                className={classNames({
-                  Preferences__button: true,
-                  'Preferences__button--donations': true,
-                  'Preferences__button--selected': isDonationsPage(
-                    settingsLocation.page
-                  ),
-                })}
-                onClick={() =>
-                  setSettingsLocation({ page: SettingsPage.Donations })
-                }
-              >
-                {i18n('icu:Preferences__button--donate')}
-              </button>
+              {!isEmbedded ? (
+                <button
+                  type="button"
+                  className={classNames({
+                    Preferences__button: true,
+                    'Preferences__button--donations': true,
+                    'Preferences__button--selected': isDonationsPage(
+                      settingsLocation.page
+                    ),
+                  })}
+                  onClick={() =>
+                    setSettingsLocation({ page: SettingsPage.Donations })
+                  }
+                >
+                  {i18n('icu:Preferences__button--donate')}
+                </button>
+              ) : null}
               {isInternalUser ? (
                 <button
                   type="button"
