@@ -219,19 +219,32 @@ async function defaultConnect({
   tlsOptions,
   abortSignal,
 }: ConnectOptionsType): Promise<net.Socket> {
+  const electron = require('electron') as {
+    ipcRenderer: { sendSync: (channel: string) => unknown };
+  };
   let rejectUnauthorized: boolean;
   try {
-    const { ipcRenderer } = require('electron') as { ipcRenderer: { sendSync: (channel: string) => boolean } };
-    rejectUnauthorized = ipcRenderer.sendSync('get-signal-tls-reject-unauthorized');
+    const v = electron.ipcRenderer.sendSync('get-signal-tls-reject-unauthorized');
+    rejectUnauthorized = v === true;
   } catch {
     rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === '1';
   }
   if (typeof rejectUnauthorized !== 'boolean') {
     rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === '1';
   }
+  let ca: string | undefined;
+  try {
+    const caPath = electron.ipcRenderer.sendSync('get-signal-ca-path') as string | undefined;
+    if (typeof caPath === 'string' && caPath) {
+      ca = require('fs').readFileSync(caPath, 'utf8');
+    }
+  } catch {
+    // 非 Zeus 嵌入或无合并 CA 时不传 ca
+  }
   const socket = tls.connect(port, address, {
     ...tlsOptions,
     rejectUnauthorized,
+    ...(ca ? { ca } : {}),
   });
   abortSignal?.addEventListener('abort', () =>
     socket.destroy(new Error('Aborted'))
