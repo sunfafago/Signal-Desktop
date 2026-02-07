@@ -26,6 +26,7 @@ export type ZeusSignalUserChangedPayload = {
 
 const ZEUS_CHANNEL_USER_CHANGED = 'zeus-session-user-changed';
 const ZEUS_CHANNEL_UNREAD = 'zeus-signal-unread';
+const ZEUS_CHANNEL_CHAT_LIST = 'zeus-signal-chat-list';
 
 const PLACEHOLDER_SIZE = 96;
 
@@ -123,3 +124,53 @@ export function pushZeusUnreadCount(unreadCount: number): void {
     ipcRenderer.send(ZEUS_CHANNEL_UNREAD, { unreadCount });
   } catch (_) {}
 }
+
+/** 与主进程 friend-list:get 对齐的列表项，供群发对象等使用 */
+export type ZeusSignalChatListItem = {
+  peerId: string;
+  title?: string;
+  unreadCount?: number;
+  topMessageId?: number;
+};
+
+/**
+ * 推送当前会话列表到主进程（群发页「群发对象」等使用）。
+ * 排除本账号会话，仅上报与其它联系人的会话。
+ * 主进程在「当前账号切换」或创建后延迟会下发 zeus-request-chat-list，收到后调用本函数。
+ */
+export function pushZeusChatList(): void {
+  try {
+    const controller = window.ConversationController;
+    if (!controller?.getAll) return;
+    const ourId = controller.getOurConversationId?.() ?? null;
+    const all = controller.getAll();
+    const items: ZeusSignalChatListItem[] = [];
+    for (const convo of all) {
+      const id = convo.get?.('id');
+      if (id == null || id === ourId) continue;
+      const title = convo.getTitle?.() ?? undefined;
+      const unreadCount = convo.get?.('unreadCount');
+      items.push({
+        peerId: String(id),
+        title: title ?? undefined,
+        ...(typeof unreadCount === 'number' && unreadCount > 0 ? { unreadCount } : {}),
+      });
+    }
+    ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST, { items });
+  } catch (_) {}
+}
+
+/**
+ * 注册主进程「请求会话列表」监听，便于群发页等获取到数据。
+ * 在 preload 加载时执行一次即可。
+ */
+function registerZeusRequestChatList(): void {
+  try {
+    ipcRenderer.on('zeus-request-chat-list', () => {
+      pushZeusChatList();
+    });
+  } catch (_) {}
+}
+
+// preload 加载时注册，主进程在切换账号或创建后延迟会下发 zeus-request-chat-list
+registerZeusRequestChatList();
