@@ -6,7 +6,7 @@
  * 单独定义便于后期优化与扩展，不散落在 background 各处。
  */
 import { ipcRenderer } from 'electron';
-import { getRawAvatarPath } from '../util/avatarUtils.preload.js';
+import { getRawAvatarPath, getLocalAvatarUrl } from '../util/avatarUtils.preload.js';
 import { SIGNAL_AVATAR_PATH } from '../types/SignalConversation.std.js';
 import type { AvatarColorType } from '../types/Colors.std.js';
 import { AvatarColorMap, AvatarColors } from '../types/Colors.std.js';
@@ -14,7 +14,6 @@ import { getInitials } from '../util/getInitials.std.js';
 import { getIdentifierHash } from '../Crypto.node.js';
 import { isAciString } from '../util/isAciString.std.js';
 import { isGroup } from '../util/whatTypeOfConversation.dom.js';
-import { readFileSync, existsSync } from 'node:fs';
 
 /** 当前登录用户信息推送载荷 */
 export type ZeusSignalUserChangedPayload = {
@@ -142,66 +141,108 @@ export type ZeusSignalChatListItem = {
   avatarDataUrl?: string;
 };
 
-/** 前 N 条会话带真实头像，避免一次读取过多文件阻塞 */
+/** 前 N 条会话带真实头像 */
 const ZEUS_CHAT_LIST_AVATAR_LIMIT = 150;
+/** 并发加载头像数量，避免同时请求过多 */
+const ZEUS_AVATAR_FETCH_CONCURRENCY = 6;
 
 /**
- * 从本地绝对路径读取头像文件并转为 data URL；占位路径或不存在则返回 undefined。
+ * 通过 attachment:// 协议 URL 加载头像并转为 data URL（支持 v1/v2 加密，由 session 的 protocol 解密）。
+ * 仅在 URL 以 attachment:// 开头时请求，否则返回 undefined。
  */
-function readAvatarAsDataUrl(absolutePath: string | undefined): string | undefined {
-  if (!absolutePath || absolutePath === SIGNAL_AVATAR_PATH) return undefined;
-  if (!absolutePath.startsWith('/') && !/^[A-Za-z]:[/\\]/.test(absolutePath)) return undefined;
+async function fetchAvatarAsDataUrl(avatarUrl: string | undefined): Promise<string | undefined> {
+  if (!avatarUrl || typeof avatarUrl !== 'string' || !avatarUrl.startsWith('attachment://')) {
+    return undefined;
+  }
   try {
-    if (!existsSync(absolutePath)) return undefined;
-    const buf = readFileSync(absolutePath);
-    const lower = absolutePath.toLowerCase();
-    const mime =
-      lower.endsWith('.png') ? 'image/png' : lower.endsWith('.jpg') || lower.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
-    return `data:${mime};base64,${buf.toString('base64')}`;
+    const res = await fetch(avatarUrl);
+    if (!res.ok) return undefined;
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return undefined;
+    return await new Promise<string | undefined>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(undefined);
+      reader.readAsDataURL(blob);
+    });
   } catch {
     return undefined;
   }
 }
 
+/** 限制并发执行 Promise */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  let index = 0;
+  async function worker(): Promise<void> {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  return results;
+}
+
 /**
  * 推送当前会话列表到主进程（群发页「群发对象」等使用）。
- * 排除本账号会话，仅上报与其它联系人的会话；带 title（昵称/群名）与 type（user/group）便于展示与筛选。
+ * 排除本账号会话，带 title、type；头像通过 attachment:// 协议 fetch 后转 data URL（支持 v2 加密）。
  * 主进程在「当前账号切换」或创建后延迟会下发 zeus-request-chat-list，收到后调用本函数。
  */
 export function pushZeusChatList(): void {
-  try {
-    const controller = window.ConversationController;
-    if (!controller?.getAll) return;
-    const ourId = controller.getOurConversationId?.() ?? null;
-    const all = controller.getAll();
-    const items: ZeusSignalChatListItem[] = [];
-    let avatarCount = 0;
-    for (const convo of all) {
-      const id = convo.get?.('id');
-      if (id == null || id === ourId) continue;
-      const attrs = convo.attributes;
-      const title =
-        typeof convo.getTitle === 'function'
-          ? convo.getTitle()
-          : attrs?.name ?? attrs?.profileName ?? attrs?.e164 ?? undefined;
-      const unreadCount = convo.get?.('unreadCount');
-      const type: 'user' | 'group' | undefined = attrs && isGroup(attrs) ? 'group' : 'user';
-      let avatarDataUrl: string | undefined;
-      if (avatarCount < ZEUS_CHAT_LIST_AVATAR_LIMIT && attrs) {
-        const path = getRawAvatarPath(attrs);
-        avatarDataUrl = readAvatarAsDataUrl(path);
-        if (avatarDataUrl) avatarCount += 1;
+  void (async () => {
+    try {
+      const controller = window.ConversationController;
+      if (!controller?.getAll) return;
+      const ourId = controller.getOurConversationId?.() ?? null;
+      const all = controller.getAll();
+      const rows: Array<{
+        peerId: string;
+        title?: string;
+        type: 'user' | 'group' | undefined;
+        unreadCount?: number;
+        avatarUrl?: string;
+      }> = [];
+      for (const convo of all) {
+        const id = convo.get?.('id');
+        if (id == null || id === ourId) continue;
+        const attrs = convo.attributes;
+        const title =
+          typeof convo.getTitle === 'function'
+            ? convo.getTitle()
+            : attrs?.name ?? attrs?.profileName ?? attrs?.e164 ?? undefined;
+        const unreadCount = convo.get?.('unreadCount');
+        const type: 'user' | 'group' | undefined = attrs && isGroup(attrs) ? 'group' : 'user';
+        const avatarUrl =
+          rows.length < ZEUS_CHAT_LIST_AVATAR_LIMIT && attrs ? getLocalAvatarUrl(attrs) : undefined;
+        rows.push({
+          peerId: String(id),
+          title: title != null ? String(title) : undefined,
+          type,
+          ...(typeof unreadCount === 'number' && unreadCount > 0 ? { unreadCount } : {}),
+          ...(avatarUrl ? { avatarUrl } : {}),
+        });
       }
-      items.push({
-        peerId: String(id),
-        title: title != null ? String(title) : undefined,
-        type,
-        ...(typeof unreadCount === 'number' && unreadCount > 0 ? { unreadCount } : {}),
-        ...(avatarDataUrl ? { avatarDataUrl } : {}),
-      });
-    }
-    ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST, { items });
-  } catch (_) {}
+      const avatarUrls = rows.map((r) => r.avatarUrl);
+      const dataUrls = await mapWithConcurrency(
+        avatarUrls,
+        ZEUS_AVATAR_FETCH_CONCURRENCY,
+        (url) => fetchAvatarAsDataUrl(url)
+      );
+      const items: ZeusSignalChatListItem[] = rows.map((row, i) => ({
+        peerId: row.peerId,
+        title: row.title,
+        type: row.type,
+        ...(row.unreadCount != null ? { unreadCount: row.unreadCount } : {}),
+        ...(dataUrls[i] ? { avatarDataUrl: dataUrls[i] } : {}),
+      }));
+      ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST, { items });
+    } catch (_) {}
+  })();
 }
 
 /**
