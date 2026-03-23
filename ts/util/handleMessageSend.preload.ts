@@ -15,6 +15,7 @@ import {
 import { SEALED_SENDER } from '../types/SealedSender.std.js';
 import type { ServiceIdString } from '../types/ServiceId.std.js';
 import { drop } from './drop.std.js';
+import { pushZeusMessageSent } from '../zeus/zeusEmbed.preload.js';
 
 const { isBoolean, isNumber } = lodash;
 
