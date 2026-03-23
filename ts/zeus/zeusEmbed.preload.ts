@@ -6,6 +6,7 @@
  * 单独定义便于后期优化与扩展，不散落在 background 各处。
  */
 import { ipcRenderer } from 'electron';
+import { createZeusSignalSendMessage } from './zeusSignalBroadcastBridge.preload.js';
 import { getRawAvatarPath, getLocalAvatarUrl } from '../util/avatarUtils.preload.js';
 import { SIGNAL_AVATAR_PATH } from '../types/SignalConversation.std.js';
 import type { AvatarColorType } from '../types/Colors.std.js';
@@ -13,12 +14,14 @@ import { AvatarColorMap, AvatarColors } from '../types/Colors.std.js';
 import { getInitials } from '../util/getInitials.std.js';
 import { getIdentifierHash } from '../Crypto.node.js';
 import { isAciString } from '../util/isAciString.std.js';
-import { isGroup } from '../util/whatTypeOfConversation.dom.js';
+import { isGroup, isMe } from '../util/whatTypeOfConversation.dom.js';
 
 /** 当前登录用户信息推送载荷 */
 export type ZeusSignalUserChangedPayload = {
   e164?: string;
   title?: string;
+  /** 当前账号 conversation id，供主进程过滤会话列表中的自身 */
+  userId?: string;
   /** 用户头像本地绝对路径，主进程据此提供 zeus-avatar://appId 供前端展示 */
   avatarPath?: string;
   /** 无头像时按 Signal 规则生成的占位图（纯色 bg + fg 首字母，与 BetterAvatarBubble 一致）data URL，主进程写入临时文件后按 appId 提供 zeus-avatar */
@@ -67,12 +70,26 @@ export type ZeusUserStorage = {
  * 无真实头像时按 Signal 规则生成占位图（与 BetterAvatarBubble 一致：纯色 bg + fg 首字母），转为 data URL 发送，主进程写入临时文件供 zeus-avatar 使用。
  * 只要发送用户信息就必定带上头像：有则发真实头像路径，没有则生成占位图并发送，确保主进程始终有图可展示。
  */
+/** getTitle 在无 profileName/e164 时返回 i18n 的「未知」，避免用该占位符；优先 profileName + e164 */
+function getDisplayTitle(
+  ourConversation: { getTitleNoDefault?: (opts?: { isShort?: boolean }) => string | undefined; attributes?: { profileName?: string; profileFamilyName?: string; e164?: string } } | undefined,
+  e164: string | undefined
+): string {
+  if (!ourConversation?.attributes) return e164 ?? '';
+  const attrs = ourConversation.attributes;
+  const noDefault = ourConversation.getTitleNoDefault?.();
+  if (noDefault && noDefault.trim()) return noDefault.trim();
+  const profileName = [attrs.profileName, attrs.profileFamilyName].filter(Boolean).join(' ').trim();
+  if (profileName) return profileName;
+  return e164 ?? '';
+}
+
 export function pushZeusUserInfo(storage: ZeusUserStorage): void {
   try {
     const e164 = storage.user.getNumber() ?? undefined;
     const ourConversation =
       window.ConversationController?.getOurConversation?.();
-    const title = ourConversation?.getTitle?.() ?? '';
+    const title = getDisplayTitle(ourConversation, e164);
     let avatarPath: string | undefined;
     let avatarDataUrl: string | undefined;
     let placeholderHash: number | undefined;
@@ -108,9 +125,11 @@ export function pushZeusUserInfo(storage: ZeusUserStorage): void {
     }
 
     if (e164 != null || title || avatarPath || avatarDataUrl) {
+      const ourId = ourConversation?.get?.('id');
       ipcRenderer.send(ZEUS_CHANNEL_USER_CHANGED, {
         e164,
         title: title || undefined,
+        userId: typeof ourId === 'string' ? ourId : undefined,
         avatarPath,
         avatarDataUrl,
       } as ZeusSignalUserChangedPayload);
@@ -211,6 +230,8 @@ export function pushZeusChatList(): void {
         const id = convo.get?.('id');
         if (id == null || id === ourId) continue;
         const attrs = convo.attributes;
+        // 排除「给自己发消息」会话：ourId 可能因格式或时序不一致，用 isMe(e164/serviceId) 双重保障
+        if (attrs && isMe(attrs)) continue;
         const title =
           typeof convo.getTitle === 'function'
             ? convo.getTitle()
@@ -303,6 +324,27 @@ function registerZeusBroadcastSendMessage(): void {
 }
 
 /**
+ * 订阅 Redux 当前会话变化，上报 zeus-webview-current-chat-peer 供主进程翻译配置按会话区分。
+ */
+function registerZeusCurrentChatPeer(): void {
+  try {
+    const store = (window as unknown as { reduxStore?: { subscribe: (cb: () => void) => () => void; getState: () => { conversations?: { selectedConversationId?: string } } } }).reduxStore;
+    if (!store?.subscribe || !store.getState) return;
+    let lastId: string | null = null;
+    store.subscribe(() => {
+      const id = store.getState()?.conversations?.selectedConversationId ?? null;
+      if (id !== lastId) {
+        lastId = id;
+        ipcRenderer.send('zeus-webview-current-chat-peer', id ?? null);
+      }
+    });
+    // 初始化时发送一次
+    lastId = store.getState()?.conversations?.selectedConversationId ?? null;
+    ipcRenderer.send('zeus-webview-current-chat-peer', lastId ?? null);
+  } catch (_) {}
+}
+
+/**
  * 主进程请求打开会话时（群发页「在应用内打开」等）调用 reduxActions.conversations.showConversation。
  */
 function registerZeusOpenChat(): void {
@@ -359,9 +401,12 @@ function waitUntilReady(): Promise<void> {
   });
 }
 
-// 与主进程的群发、打开会话、会话列表等 IPC；等 isReady 后再注册 request-chat-list
+// 与主进程的群发、打开会话、会话列表等 IPC；等 isReady 后再注册 request-chat-list 与 __zeusSignalSendMessage
 waitUntilReady().then(() => {
+  (window as unknown as { __zeusSignalSendMessage?: (peerId: string, payload: Record<string, unknown>) => Promise<{ success: boolean; error?: string }> }).__zeusSignalSendMessage =
+    createZeusSignalSendMessage();
   registerZeusRequestChatList();
   registerZeusBroadcastSendMessage();
   registerZeusOpenChat();
+  registerZeusCurrentChatPeer();
 });

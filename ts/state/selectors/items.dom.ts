@@ -224,7 +224,7 @@ export const getTextFormattingEnabled = createSelector(
 
 export const getNavTabsCollapsed = createSelector(
   getItems,
-  (state: ItemsStateType): boolean => state.navTabsCollapsed ?? false
+  (state: ItemsStateType): boolean => state.navTabsCollapsed ?? true
 );
 
 export const getShowStickerPickerHint = createSelector(
