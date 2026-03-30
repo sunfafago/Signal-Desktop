@@ -29,7 +29,8 @@ export type ZeusSignalUserChangedPayload = {
 };
 
 const ZEUS_CHANNEL_USER_CHANGED = 'zeus-session-user-changed';
-const ZEUS_CHANNEL_UNREAD = 'zeus-signal-unread';
+/** 与 zeus-app-unread 统一通道；主进程兼容保留 zeus-signal-unread 监听作为降级保障 */
+const ZEUS_CHANNEL_UNREAD = 'zeus-app-unread';
 const ZEUS_CHANNEL_CHAT_LIST = 'zeus-signal-chat-list';
 const ZEUS_CHANNEL_SESSION_STATUS = 'zeus-session-status';
 const ZEUS_CHANNEL_MESSAGE_SENT = 'zeus-tweb-message-sent';
@@ -139,13 +140,22 @@ export function pushZeusUserInfo(storage: ZeusUserStorage): void {
   } catch (_) {}
 }
 
+/** 上次上报的未读数，-1 表示尚未初始化，避免首次上报误触发「新消息」通知 */
+let _lastSignalUnreadCount = -1;
+
 /**
  * 推送当前未读消息数到主进程（会话列表左上角展示）。
  * 在 ConversationController.updateUnreadCount() 内调用。
+ * 未读数增加时额外发送 zeus-app-new-message，供主进程推送桌面通知。
  */
 export function pushZeusUnreadCount(unreadCount: number): void {
   try {
-    ipcRenderer.send(ZEUS_CHANNEL_UNREAD, { unreadCount });
+    const wasIncrease = _lastSignalUnreadCount >= 0 && unreadCount > _lastSignalUnreadCount;
+    _lastSignalUnreadCount = unreadCount;
+    ipcRenderer.send(ZEUS_CHANNEL_UNREAD, { unreadCount, rendererChannel: 'signal-unread' });
+    if (wasIncrease) {
+      ipcRenderer.send('zeus-app-new-message', {});
+    }
   } catch (_) {}
 }
 
