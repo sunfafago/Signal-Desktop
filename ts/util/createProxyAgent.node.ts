@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import net from 'node:net';
+import { readFileSync } from 'node:fs';
 import type { ProxyAgent } from 'proxy-agent';
 import { URL } from 'node:url';
 import type { LookupOptions, LookupAddress } from 'node:dns';
@@ -28,6 +29,30 @@ const SOCKS_PROTOCOLS = new Set([
 ]);
 
 export type { ProxyAgent };
+
+/**
+ * 通过 IPC 读取 Zeus 主进程的 TLS 设置，与 createHTTPSAgent 保持一致：
+ * - rejectUnauthorized：在嵌入场景下主进程固定返回 false，兼容企业 SSL 检查代理
+ * - ca：合并了 Node 内置根证 + Windows 企业根证 + Signal 自身 CA 的文件路径
+ */
+function getZeusTlsOptions(): { rejectUnauthorized: boolean; ca: string | undefined } {
+  let rejectUnauthorized = false;
+  let ca: string | undefined;
+  try {
+    const electron = require('electron') as {
+      ipcRenderer: { sendSync: (channel: string) => unknown };
+    };
+    const v = electron.ipcRenderer.sendSync('get-signal-tls-reject-unauthorized');
+    rejectUnauthorized = v === true;
+    const caPath = electron.ipcRenderer.sendSync('get-signal-ca-path') as string | undefined;
+    if (typeof caPath === 'string' && caPath) {
+      ca = readFileSync(caPath, 'utf8');
+    }
+  } catch {
+    rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === '1';
+  }
+  return { rejectUnauthorized, ca };
+}
 
 export async function createProxyAgent(proxyUrl: string): Promise<ProxyAgent> {
   const { port: portStr, hostname: proxyHost, protocol } = new URL(proxyUrl);
@@ -100,9 +125,12 @@ export async function createProxyAgent(proxyUrl: string): Promise<ProxyAgent> {
     }
   }
 
+  const { rejectUnauthorized, ca } = getZeusTlsOptions();
   const { ProxyAgent } = await import('proxy-agent');
 
   return new ProxyAgent({
+    rejectUnauthorized,
+    ...(ca ? { ca } : {}),
     lookup:
       port !== undefined
         ? (host, opts, callback) =>
