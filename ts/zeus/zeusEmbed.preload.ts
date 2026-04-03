@@ -16,6 +16,35 @@ import { getIdentifierHash } from '../Crypto.node.js';
 import { isAciString } from '../util/isAciString.std.js';
 import { isGroup, isMe } from '../util/whatTypeOfConversation.dom.js';
 
+// ---------------------------------------------------------------------------
+// window 扩展：Zeus preload 与 Signal 页面 bundle 协作挂载的字段（避免散落 as unknown as）
+// ---------------------------------------------------------------------------
+
+/** 群发桥接：页面侧实现实际发送 */
+export type ZeusSignalSendMessageFn = (
+  peerId: string,
+  payload: Record<string, unknown>
+) => Promise<{ success: boolean; error?: string }>;
+
+type ZeusReduxStoreForEmbed = {
+  subscribe: (cb: () => void) => () => void;
+  /** 当前会话 peer：registerZeusCurrentChatPeer 必需；指纹监听仅用到 subscribe */
+  getState?: () => { conversations?: { selectedConversationId?: string | undefined } };
+};
+
+/** 与 Signal 自带 Window.reduxActions 等分开收窄，避免与全局 Window 声明冲突 */
+type ZeusSignalEmbedGlobals = {
+  __zeusSignalSendMessage?: ZeusSignalSendMessageFn;
+  reduxStore?: ZeusReduxStoreForEmbed;
+  reduxActions?: {
+    conversations?: { showConversation: (p: { conversationId: string }) => void };
+  };
+};
+
+function zeusSignalEmbedGlobals(): ZeusSignalEmbedGlobals {
+  return window as unknown as ZeusSignalEmbedGlobals;
+}
+
 /** 当前登录用户信息推送载荷 */
 export type ZeusSignalUserChangedPayload = {
   e164?: string;
@@ -174,21 +203,40 @@ export type ZeusSignalChatListItem = {
 const ZEUS_CHAT_LIST_AVATAR_LIMIT = 150;
 /** 并发加载头像数量，避免同时请求过多 */
 const ZEUS_AVATAR_FETCH_CONCURRENCY = 6;
+/** 与主进程 zeus-signal-chat-list 分块合并一致 */
+const ZEUS_SIGNAL_CHAT_LIST_CHUNK = 400;
+
+function sendSignalChatListPayload(items: ZeusSignalChatListItem[]): void {
+  const n = items.length;
+  if (n <= ZEUS_SIGNAL_CHAT_LIST_CHUNK) {
+    ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST, { items });
+    return;
+  }
+  const listSyncId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const chunkTotal = Math.ceil(n / ZEUS_SIGNAL_CHAT_LIST_CHUNK);
+  for (let i = 0; i < chunkTotal; i++) {
+    const slice = items.slice(i * ZEUS_SIGNAL_CHAT_LIST_CHUNK, (i + 1) * ZEUS_SIGNAL_CHAT_LIST_CHUNK);
+    ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST, {
+      items: slice,
+      listSyncId,
+      chunkIndex: i,
+      chunkTotal,
+    });
+  }
+}
 
 /**
  * 通过 attachment:// 协议 URL 加载头像并转为 data URL（支持 v1/v2 加密，由 session 的 protocol 解密）。
  * 仅在 URL 以 attachment:// 开头时请求，否则返回 undefined。
  */
 async function fetchAvatarAsDataUrl(avatarUrl: string | undefined): Promise<string | undefined> {
-  if (!avatarUrl || typeof avatarUrl !== 'string' || !avatarUrl.startsWith('attachment://')) {
-    return undefined;
-  }
+  if (!avatarUrl?.startsWith('attachment://')) return undefined;
   try {
     const res = await fetch(avatarUrl);
     if (!res.ok) return undefined;
     const blob = await res.blob();
     if (!blob.type.startsWith('image/')) return undefined;
-    return await new Promise<string | undefined>((resolve) => {
+    return new Promise<string | undefined>((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
       reader.onerror = () => resolve(undefined);
@@ -228,52 +276,73 @@ export function pushZeusChatList(): void {
       const controller = window.ConversationController;
       if (!controller?.getAll) return;
       const ourId = controller.getOurConversationId?.() ?? null;
-      const all = controller.getAll();
-      const rows: Array<{
-        peerId: string;
-        title?: string;
-        type: 'user' | 'group' | undefined;
-        unreadCount?: number;
-        avatarUrl?: string;
-      }> = [];
-      for (const convo of all) {
+
+      const items: ZeusSignalChatListItem[] = [];
+      const avatarUrls: (string | undefined)[] = [];
+
+      for (const convo of controller.getAll()) {
         const id = convo.get?.('id');
         if (id == null || id === ourId) continue;
         const attrs = convo.attributes;
         // 排除「给自己发消息」会话：ourId 可能因格式或时序不一致，用 isMe(e164/serviceId) 双重保障
         if (attrs && isMe(attrs)) continue;
-        const title =
+
+        const rawTitle =
           typeof convo.getTitle === 'function'
             ? convo.getTitle()
-            : attrs?.name ?? attrs?.profileName ?? attrs?.e164 ?? undefined;
+            : attrs?.name ?? attrs?.profileName ?? attrs?.e164;
         const unreadCount = convo.get?.('unreadCount');
-        const type: 'user' | 'group' | undefined = attrs && isGroup(attrs) ? 'group' : 'user';
-        const avatarUrl =
-          rows.length < ZEUS_CHAT_LIST_AVATAR_LIMIT && attrs ? getLocalAvatarUrl(attrs) : undefined;
-        rows.push({
+
+        items.push({
           peerId: String(id),
-          title: title != null ? String(title) : undefined,
-          type,
+          ...(rawTitle != null ? { title: String(rawTitle) } : {}),
+          type: attrs && isGroup(attrs) ? 'group' : 'user',
           ...(typeof unreadCount === 'number' && unreadCount > 0 ? { unreadCount } : {}),
-          ...(avatarUrl ? { avatarUrl } : {}),
         });
+        avatarUrls.push(
+          items.length <= ZEUS_CHAT_LIST_AVATAR_LIMIT && attrs ? getLocalAvatarUrl(attrs) : undefined
+        );
       }
-      const avatarUrls = rows.map((r) => r.avatarUrl);
-      const dataUrls = await mapWithConcurrency(
-        avatarUrls,
-        ZEUS_AVATAR_FETCH_CONCURRENCY,
-        (url) => fetchAvatarAsDataUrl(url)
-      );
-      const items: ZeusSignalChatListItem[] = rows.map((row, i) => ({
-        peerId: row.peerId,
-        title: row.title,
-        type: row.type,
-        ...(row.unreadCount != null ? { unreadCount: row.unreadCount } : {}),
-        ...(dataUrls[i] ? { avatarDataUrl: dataUrls[i] } : {}),
-      }));
-      ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST, { items });
+
+      const dataUrls = await mapWithConcurrency(avatarUrls, ZEUS_AVATAR_FETCH_CONCURRENCY, fetchAvatarAsDataUrl);
+      dataUrls.forEach((dataUrl, i) => {
+        if (dataUrl) items[i].avatarDataUrl = dataUrl;
+      });
+
+      sendSignalChatListPayload(items);
     } catch (_) {}
   })();
+}
+
+/**
+ * 会话 id 集合变化时防抖全量推送（与 registerZeusRequestChatList 不冲突：后者是主进程主动拉取，本函数是本地模型变化时推送）。
+ */
+let _zeusSignalConversationFingerprint = '';
+function registerZeusChatListConversationFingerprint(): void {
+  try {
+    const store = zeusSignalEmbedGlobals().reduxStore;
+    if (!store?.subscribe) return;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    store.subscribe(() => {
+      if (debounceTimer != null) return;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = undefined;
+        try {
+          const controller = window.ConversationController;
+          if (!controller?.getAll) return;
+          const all = controller.getAll();
+          const ids = all
+            .map((c) => String(c.get?.('id') ?? ''))
+            .filter(Boolean)
+            .sort()
+            .join('\n');
+          if (ids === _zeusSignalConversationFingerprint) return;
+          _zeusSignalConversationFingerprint = ids;
+          pushZeusChatList();
+        } catch (_) {}
+      }, 800);
+    });
+  } catch (_) {}
 }
 
 /**
@@ -307,7 +376,7 @@ function registerZeusBroadcastSendMessage(): void {
             });
           } catch (_) {}
         };
-        const send = (window as unknown as { __zeusSignalSendMessage?: (peerId: string, payload: Record<string, unknown>) => Promise<{ success: boolean; error?: string }> }).__zeusSignalSendMessage;
+        const send = zeusSignalEmbedGlobals().__zeusSignalSendMessage;
         if (typeof send !== 'function') {
           reply({
             success: false,
@@ -338,18 +407,19 @@ function registerZeusBroadcastSendMessage(): void {
  */
 function registerZeusCurrentChatPeer(): void {
   try {
-    const store = (window as unknown as { reduxStore?: { subscribe: (cb: () => void) => () => void; getState: () => { conversations?: { selectedConversationId?: string } } } }).reduxStore;
-    if (!store?.subscribe || !store.getState) return;
+    const store = zeusSignalEmbedGlobals().reduxStore;
+    const getState = store?.getState;
+    if (!store?.subscribe || !getState) return;
     let lastId: string | null = null;
     store.subscribe(() => {
-      const id = store.getState()?.conversations?.selectedConversationId ?? null;
+      const id = getState()?.conversations?.selectedConversationId ?? null;
       if (id !== lastId) {
         lastId = id;
         ipcRenderer.send('zeus-webview-current-chat-peer', id ?? null);
       }
     });
     // 初始化时发送一次
-    lastId = store.getState()?.conversations?.selectedConversationId ?? null;
+    lastId = getState()?.conversations?.selectedConversationId ?? null;
     ipcRenderer.send('zeus-webview-current-chat-peer', lastId ?? null);
   } catch (_) {}
 }
@@ -362,15 +432,15 @@ function registerZeusOpenChat(): void {
     ipcRenderer.on('zeus-open-chat', (_event: Electron.IpcRendererEvent, conversationId: string) => {
       const id = typeof conversationId === 'string' ? conversationId.trim() : '';
       if (!id) return;
-      const actions = (window as unknown as { reduxActions?: { conversations?: { showConversation: (p: { conversationId: string }) => void } } }).reduxActions;
+      const actions = zeusSignalEmbedGlobals().reduxActions;
       actions?.conversations?.showConversation?.({ conversationId: id });
     });
   } catch (_) {}
 }
 
 /**
- * 注册主进程「请求会话列表」监听，便于群发页等获取到数据。
- * 在平台 isReady（ConversationController 存在且已登录）后再注册，避免未就绪时访问导致报错。
+ * 主进程下发 zeus-request-chat-list 时立即 pushZeusChatList（主动拉取）。
+ * 与 registerZeusChatListConversationFingerprint（会话集合变化时推送）互补，非互斥。
  */
 function registerZeusRequestChatList(): void {
   try {
@@ -411,12 +481,14 @@ function waitUntilReady(): Promise<void> {
   });
 }
 
-// 与主进程的群发、打开会话、会话列表等 IPC；等 isReady 后再注册 request-chat-list 与 __zeusSignalSendMessage
-waitUntilReady().then(() => {
-  (window as unknown as { __zeusSignalSendMessage?: (peerId: string, payload: Record<string, unknown>) => Promise<{ success: boolean; error?: string }> }).__zeusSignalSendMessage =
-    createZeusSignalSendMessage();
+function registerZeusEmbedAfterReady(): void {
+  zeusSignalEmbedGlobals().__zeusSignalSendMessage = createZeusSignalSendMessage();
   registerZeusRequestChatList();
   registerZeusBroadcastSendMessage();
   registerZeusOpenChat();
   registerZeusCurrentChatPeer();
-});
+  registerZeusChatListConversationFingerprint();
+}
+
+// 与主进程的群发、打开会话、会话列表等 IPC；等 isReady 后再挂 window 与监听器
+waitUntilReady().then(registerZeusEmbedAfterReady);
