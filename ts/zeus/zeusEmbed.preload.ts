@@ -7,10 +7,12 @@
  */
 import { ipcRenderer } from 'electron';
 import { createZeusSignalSendMessage } from './zeusSignalBroadcastBridge.preload.js';
+import type { ConversationAttributesType } from '../model-types.d.ts';
 import { getRawAvatarPath, getLocalAvatarUrl } from '../util/avatarUtils.preload.js';
 import { SIGNAL_AVATAR_PATH } from '../types/SignalConversation.std.js';
 import type { AvatarColorType } from '../types/Colors.std.js';
 import { AvatarColorMap, AvatarColors } from '../types/Colors.std.js';
+import { migrateColor } from '../util/migrateColor.node.js';
 import { getInitials } from '../util/getInitials.std.js';
 import { getIdentifierHash } from '../Crypto.node.js';
 import { isAciString } from '../util/isAciString.std.js';
@@ -29,7 +31,13 @@ export type ZeusSignalSendMessageFn = (
 type ZeusReduxStoreForEmbed = {
   subscribe: (cb: () => void) => () => void;
   /** 当前会话 peer：registerZeusCurrentChatPeer 必需；指纹监听仅用到 subscribe */
-  getState?: () => { conversations?: { selectedConversationId?: string | undefined } };
+  getState?: () => {
+    conversations?: {
+      selectedConversationId?: string | undefined;
+      /** 与 xsdc ChatList 一致：占位色优先取 Redux 已计算好的 color */
+      conversationLookup?: Record<string, { color?: string }>;
+    };
+  };
 };
 
 /** 与 Signal 自带 Window.reduxActions 等分开收窄，避免与全局 Window 声明冲突 */
@@ -197,6 +205,10 @@ export type ZeusSignalChatListItem = {
   type?: 'user' | 'group';
   /** 头像 data URL（前 N 条从本地文件读取） */
   avatarDataUrl?: string;
+  /** Signal AvatarColorMap 色键，如 "A150"；前端查表（SIGNAL_AVATAR_COLOR_MAP）得 bg/fg，不在此传 hex */
+  signalColorKey?: string;
+  /** 与桌面 getInitials(title) 一致（含大小写） */
+  signalInitials?: string;
 };
 
 /** 前 N 条会话带真实头像 */
@@ -226,22 +238,134 @@ function sendSignalChatListPayload(items: ZeusSignalChatListItem[]): void {
 }
 
 /**
- * 通过 attachment:// 协议 URL 加载头像并转为 data URL（支持 v1/v2 加密，由 session 的 protocol 解密）。
- * 仅在 URL 以 attachment:// 开头时请求，否则返回 undefined。
+ * 与 Signal 列表一致的可 fetch 头像地址：本地 attachment://、打包内相对路径、或仅有 remote 时的 HTTPS。
+ * getLocalAvatarUrl 对「Signal 官方号」等会返回无协议的 path，需相对 window.location 解析。
+ */
+function resolveZeusAvatarFetchUrl(attrs: ConversationAttributesType): string | undefined {
+  const local = getLocalAvatarUrl(attrs);
+  if (local) {
+    if (
+      local.startsWith('attachment://') ||
+      local.startsWith('http://') ||
+      local.startsWith('https://') ||
+      local.startsWith('file://')
+    ) {
+      return local;
+    }
+    if (!local.includes('://')) {
+      try {
+        return new URL(local, window.location.origin).href;
+      } catch {
+        return undefined;
+      }
+    }
+    return local;
+  }
+  const remote = attrs.remoteAvatarUrl;
+  if (typeof remote === 'string') {
+    const t = remote.trim();
+    if (/^https?:\/\//i.test(t)) return t;
+  }
+  return undefined;
+}
+
+/**
+ * 与 xsdc ChatList 取色顺序一致：Redux conversationLookup[id].color → attrs.color → migrateColor（含哈希回退）。
+ * 最后用 migrateColor 统一校验/迁移旧色名。
+ */
+function resolveZeusSignalListAvatarColorKey(
+  conversationId: string,
+  attrs: ConversationAttributesType | undefined,
+  isSigGroup: boolean
+): AvatarColorType {
+  let chosen: string | undefined;
+  try {
+    const store = zeusSignalEmbedGlobals().reduxStore;
+    if (store?.getState) {
+      const data =
+        store.getState()?.conversations?.conversationLookup?.[String(conversationId)];
+      if (data?.color != null && String(data.color).trim()) {
+        chosen = String(data.color);
+      }
+    }
+  } catch {
+    // Redux 可能尚未就绪
+  }
+  if (!chosen && attrs?.color != null && String(attrs.color).trim()) {
+    chosen = String(attrs.color);
+  }
+  const groupId =
+    isSigGroup && attrs ? (attrs.groupId || String(conversationId)) : undefined;
+  return migrateColor(chosen as AvatarColorType | undefined, {
+    aci: attrs?.serviceId != null && isAciString(attrs.serviceId) ? attrs.serviceId : undefined,
+    e164: attrs?.e164,
+    pni: attrs?.pni,
+    groupId,
+  });
+}
+
+/** 限制长边像素，缩小 IPC 体积、降低主进程写盘失败概率 */
+const ZEUS_LIST_AVATAR_MAX_EDGE_PX = 160;
+
+async function downscaleDataUrlForIpc(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (!w || !h) {
+          resolve(dataUrl);
+          return;
+        }
+        const maxEdge = Math.max(w, h);
+        if (maxEdge <= ZEUS_LIST_AVATAR_MAX_EDGE_PX) {
+          resolve(dataUrl);
+          return;
+        }
+        const scale = ZEUS_LIST_AVATAR_MAX_EDGE_PX / maxEdge;
+        const cw = Math.max(1, Math.round(w * scale));
+        const ch = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, cw, ch);
+        resolve(canvas.toDataURL('image/jpeg', 0.88));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * fetch 头像字节并转为 data URL。attachment:// 经协议解密后 Blob.type 常为 octet-stream 或空，不能仅用 MIME 判断。
+ * 大图会缩放到最长边 ZEUS_LIST_AVATAR_MAX_EDGE_PX，减轻 IPC/落盘压力。
  */
 async function fetchAvatarAsDataUrl(avatarUrl: string | undefined): Promise<string | undefined> {
-  if (!avatarUrl?.startsWith('attachment://')) return undefined;
+  if (!avatarUrl?.trim()) return undefined;
   try {
     const res = await fetch(avatarUrl);
     if (!res.ok) return undefined;
     const blob = await res.blob();
-    if (!blob.type.startsWith('image/')) return undefined;
-    return new Promise<string | undefined>((resolve) => {
+    if (blob.size === 0) return undefined;
+    const mime = blob.type || '';
+    if (mime.startsWith('text/')) return undefined;
+    const raw = await new Promise<string | undefined>((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
       reader.onerror = () => resolve(undefined);
       reader.readAsDataURL(blob);
     });
+    if (!raw) return undefined;
+    return downscaleDataUrlForIpc(raw);
   } catch {
     return undefined;
   }
@@ -267,7 +391,7 @@ async function mapWithConcurrency<T, R>(
 
 /**
  * 推送当前会话列表到主进程（群发页「群发对象」等使用）。
- * 排除本账号会话，带 title、type；头像通过 attachment:// 协议 fetch 后转 data URL（支持 v2 加密）。
+ * 排除本账号会话，带 title、type；头像 URL 解析规则与 getConversation.avatarUrl（getLocalAvatarUrl）一致，并回退 remoteAvatarUrl。
  * 主进程在「当前账号切换」或创建后延迟会下发 zeus-request-chat-list，收到后调用本函数。
  */
 export function pushZeusChatList(): void {
@@ -287,22 +411,42 @@ export function pushZeusChatList(): void {
         // 排除「给自己发消息」会话：ourId 可能因格式或时序不一致，用 isMe(e164/serviceId) 双重保障
         if (attrs && isMe(attrs)) continue;
 
+        const isSigGroupEarly = attrs?.type === 'group' || Boolean(attrs && isGroup(attrs));
+        // 排除「此人未使用 Signal」或已注销 Signal 的直聊会话：
+        // 1. 无 serviceId → 对方从未注册过 Signal
+        // 2. firstUnregisteredAt 有值 → 对方曾注册但已注销（对应 Signal Desktop isConversationUnregisteredAndStale）
+        if (!isSigGroupEarly && (!attrs?.serviceId || attrs?.firstUnregisteredAt != null)) continue;
+        // 排除 Signal 官方号（固定 ACI，对应 isSignalConversation 逻辑）
+        if (attrs?.serviceId === '11111111-1111-4111-8111-111111111111') continue;
+
         const rawTitle =
           typeof convo.getTitle === 'function'
             ? convo.getTitle()
             : attrs?.name ?? attrs?.profileName ?? attrs?.e164;
         const unreadCount = convo.get?.('unreadCount');
+        const isSigGroup = isSigGroupEarly;
+
+        let signalColorKey: string | undefined;
+        try {
+          signalColorKey = resolveZeusSignalListAvatarColorKey(String(id), attrs, isSigGroup);
+        } catch (_) {}
+
+        const sigInitials = rawTitle != null ? getInitials(String(rawTitle)) : undefined;
 
         items.push({
           peerId: String(id),
           ...(rawTitle != null ? { title: String(rawTitle) } : {}),
-          type: attrs && isGroup(attrs) ? 'group' : 'user',
+          type: isSigGroup ? 'group' : 'user',
           ...(typeof unreadCount === 'number' && unreadCount > 0 ? { unreadCount } : {}),
+          ...(signalColorKey ? { signalColorKey } : {}),
+          ...(sigInitials ? { signalInitials: sigInitials } : {}),
         });
         avatarUrls.push(
-          items.length <= ZEUS_CHAT_LIST_AVATAR_LIMIT && attrs ? getLocalAvatarUrl(attrs) : undefined
+          items.length <= ZEUS_CHAT_LIST_AVATAR_LIMIT && attrs ? resolveZeusAvatarFetchUrl(attrs) : undefined
         );
       }
+
+      sendSignalChatListPayload(items);
 
       const dataUrls = await mapWithConcurrency(avatarUrls, ZEUS_AVATAR_FETCH_CONCURRENCY, fetchAvatarAsDataUrl);
       dataUrls.forEach((dataUrl, i) => {
