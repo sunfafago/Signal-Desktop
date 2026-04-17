@@ -34,7 +34,7 @@ type ZeusReduxStoreForEmbed = {
   getState?: () => {
     conversations?: {
       selectedConversationId?: string | undefined;
-      /** 与 xsdc ChatList 一致：占位色优先取 Redux 已计算好的 color */
+      /** 占位色优先取 Redux 已计算好的 color */
       conversationLookup?: Record<string, { color?: string }>;
     };
   };
@@ -270,7 +270,7 @@ function resolveZeusAvatarFetchUrl(attrs: ConversationAttributesType): string | 
 }
 
 /**
- * 与 xsdc ChatList 取色顺序一致：Redux conversationLookup[id].color → attrs.color → migrateColor（含哈希回退）。
+ * Redux conversationLookup[id].color → attrs.color → migrateColor（含哈希回退）。
  * 最后用 migrateColor 统一校验/迁移旧色名。
  */
 function resolveZeusSignalListAvatarColorKey(

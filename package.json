@@ -101,6 +101,8 @@
     "build:styles:tailwind": "tailwindcss -i ./stylesheets/tailwind-config.css -o ./stylesheets/tailwind.css",
     "build:electron": "electron-builder --config.extraMetadata.environment=$SIGNAL_ENV",
     "build:release": "cross-env SIGNAL_ENV=production pnpm run build:electron --config.directories.output=release",
+    "build:zeus-embed": "run-s --print-label build-protobuf build:styles build:esbuild",
+    "build:zeus-embed:prod": "run-s --print-label build-protobuf build:styles build:esbuild:prod",
     "build:release-win32-all": "pnpm run build:release --arm64 --x64",
     "build:preload-cache": "node ts/scripts/generate-preload-cache.node.js",
     "build:emoji": "run-p build:emoji:32 build:emoji:64",
