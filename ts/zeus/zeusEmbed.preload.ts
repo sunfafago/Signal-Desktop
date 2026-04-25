@@ -6,6 +6,11 @@
  * 单独定义便于后期优化与扩展，不散落在 background 各处。
  */
 import { ipcRenderer } from 'electron';
+import {
+  ZEUS_WEBVIEW_IPC,
+  type ZeusBroadcastSendMessageToWebviewPayload,
+  type ZeusBatchOperationToWebviewPayload,
+} from '../../../../packages/shared/src/zeus-webview-channels.ts';
 import { createZeusSignalSendMessage } from './zeusSignalBroadcastBridge.preload.js';
 import type { ConversationAttributesType } from '../model-types.d.ts';
 import { getRawAvatarPath, getLocalAvatarUrl } from '../util/avatarUtils.preload.js';
@@ -43,6 +48,11 @@ type ZeusReduxStoreForEmbed = {
 /** 与 Signal 自带 Window.reduxActions 等分开收窄，避免与全局 Window 声明冲突 */
 type ZeusSignalEmbedGlobals = {
   __zeusSignalSendMessage?: ZeusSignalSendMessageFn;
+  /** 可选：批量单步（进群/退群等），签名 (kind, params) => Promise<{success, error?}> */
+  __zeusSignalBatchOperation?: (
+    kind: string,
+    params: Record<string, unknown>
+  ) => Promise<{ success: boolean; error?: string }>;
   reduxStore?: ZeusReduxStoreForEmbed;
   reduxActions?: {
     conversations?: { showConversation: (p: { conversationId: string }) => void };
@@ -393,6 +403,7 @@ async function mapWithConcurrency<T, R>(
  * 推送当前会话列表到主进程（群发页「群发对象」等使用）。
  * 排除本账号会话，带 title、type；头像 URL 解析规则与 getConversation.avatarUrl（getLocalAvatarUrl）一致，并回退 remoteAvatarUrl。
  * 主进程在「当前账号切换」或创建后延迟会下发 zeus-request-chat-list，收到后调用本函数。
+ * Zeus 主进程侧与 tweb / WhatsApp 一致：`zeus-signal-chat-list` → `commitFullFriendList` → `scheduleAvatarPersistence` 将 `avatarDataUrl` 写入共享 `avatars/<appType>/` 目录并回写 `zeus-avatar://` URL（见 zeus-app `session-event-handlers.ts`）。
  */
 export function pushZeusChatList(): void {
   void (async () => {
@@ -503,14 +514,54 @@ export function pushZeusMessageSent(payload: { peerId: string; messageId?: numbe
  * 群发发送：主进程发 zeus-broadcast-send-message 时调用。
  * 若 Signal 已注册 window.__zeusSignalSendMessage(peerId, payload) => Promise<{success, error?}>，则调用并回传 zeus-broadcast-send-message-reply。
  */
+/**
+ * 批量单步：若页面实现 window.__zeusSignalBatchOperation(kind, params)，则由此转发；否则返回明确错误（见 signal-batch-scope）。
+ */
+function registerZeusBatchOperation(): void {
+  try {
+    ipcRenderer.on(
+      ZEUS_WEBVIEW_IPC.BATCH_OPERATION,
+      async (_event: Electron.IpcRendererEvent, msg: ZeusBatchOperationToWebviewPayload) => {
+        const reply = (result: { success: boolean; error?: string }) => {
+          try {
+            ipcRenderer.send(ZEUS_WEBVIEW_IPC.BATCH_OPERATION_REPLY, {
+              replyId: msg.replyId,
+              success: result.success,
+              error: result.error,
+            });
+          } catch (_) {}
+        };
+        const fn = zeusSignalEmbedGlobals().__zeusSignalBatchOperation as
+          | ((kind: string, params: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>)
+          | undefined;
+        if (typeof fn !== 'function') {
+          reply({
+            success: false,
+            error:
+              'Signal 未注册批量操作接口（window.__zeusSignalBatchOperation）。默认不支持批量进群/群公告；群发仍用 __zeusSignalSendMessage。',
+          });
+          return;
+        }
+        try {
+          const raw = await Promise.resolve(fn(msg.kind, msg.params ?? {}));
+          reply(
+            raw != null && typeof raw === 'object' && 'success' in raw
+              ? raw
+              : { success: false, error: '批量操作返回格式无效' }
+          );
+        } catch (e) {
+          reply({ success: false, error: e instanceof Error ? e.message : '批量操作失败' });
+        }
+      }
+    );
+  } catch (_) {}
+}
+
 function registerZeusBroadcastSendMessage(): void {
   try {
     ipcRenderer.on(
-      'zeus-broadcast-send-message',
-      async (
-        _event: Electron.IpcRendererEvent,
-        msg: { peerId: string; payload: Record<string, unknown>; replyId: string }
-      ) => {
+      ZEUS_WEBVIEW_IPC.BROADCAST_SEND_MESSAGE,
+      async (_event: Electron.IpcRendererEvent, msg: ZeusBroadcastSendMessageToWebviewPayload) => {
         const reply = (result: { success: boolean; error?: string }) => {
           try {
             ipcRenderer.send('zeus-broadcast-send-message-reply', {
@@ -559,12 +610,12 @@ function registerZeusCurrentChatPeer(): void {
       const id = getState()?.conversations?.selectedConversationId ?? null;
       if (id !== lastId) {
         lastId = id;
-        ipcRenderer.send('zeus-webview-current-chat-peer', id ?? null);
+        ipcRenderer.send(ZEUS_WEBVIEW_IPC.CURRENT_CHAT_PEER, id ?? null);
       }
     });
     // 初始化时发送一次
     lastId = getState()?.conversations?.selectedConversationId ?? null;
-    ipcRenderer.send('zeus-webview-current-chat-peer', lastId ?? null);
+    ipcRenderer.send(ZEUS_WEBVIEW_IPC.CURRENT_CHAT_PEER, lastId ?? null);
   } catch (_) {}
 }
 
@@ -573,7 +624,7 @@ function registerZeusCurrentChatPeer(): void {
  */
 function registerZeusOpenChat(): void {
   try {
-    ipcRenderer.on('zeus-open-chat', (_event: Electron.IpcRendererEvent, conversationId: string) => {
+    ipcRenderer.on(ZEUS_WEBVIEW_IPC.OPEN_CHAT, (_event: Electron.IpcRendererEvent, conversationId: string) => {
       const id = typeof conversationId === 'string' ? conversationId.trim() : '';
       if (!id) return;
       const actions = zeusSignalEmbedGlobals().reduxActions;
@@ -629,6 +680,7 @@ function registerZeusEmbedAfterReady(): void {
   zeusSignalEmbedGlobals().__zeusSignalSendMessage = createZeusSignalSendMessage();
   registerZeusRequestChatList();
   registerZeusBroadcastSendMessage();
+  registerZeusBatchOperation();
   registerZeusOpenChat();
   registerZeusCurrentChatPeer();
   registerZeusChatListConversationFingerprint();
