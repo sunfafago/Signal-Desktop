@@ -158,6 +158,9 @@ importers:
       '@types/fabric':
         specifier: 4.5.3
         version: 4.5.3(patch_hash=e5f339ecf72fbab1c91505e7713e127a7184bfe8164aa3a9afe9bf45a0ad6b89)
+      '@zeus/shared':
+        specifier: file:../../packages/shared
+        version: file:../../packages/shared
       blob-util:
         specifier: 2.0.2
         version: 2.0.2
@@ -4494,6 +4497,9 @@ packages:
 
   '@xtuc/long@4.2.2':
     resolution: {integrity: sha512-NuHqBY1PB/D8xU6s/thBgOAiAP7HOYDQ32+BFZILJ8ivkUkAHQnWfn6WhL79Owj1qmUnoN/YPhktdIoucipkAQ==}
+
+  '@zeus/shared@file:../../packages/shared':
+    resolution: {directory: ../../packages/shared, type: directory}
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
@@ -15542,6 +15548,10 @@ snapshots:
   '@xtuc/ieee754@1.2.0': {}
 
   '@xtuc/long@4.2.2': {}
+
+  '@zeus/shared@file:../../packages/shared':
+    dependencies:
+      uuid: 9.0.1
 
   abbrev@1.1.1: {}
 
