@@ -79,6 +79,7 @@ const ZEUS_CHANNEL_USER_CHANGED = 'zeus-session-user-changed';
 /** 与 zeus-app-unread 统一通道；主进程兼容保留 zeus-signal-unread 监听作为降级保障 */
 const ZEUS_CHANNEL_UNREAD = 'zeus-app-unread';
 const ZEUS_CHANNEL_CHAT_LIST = 'zeus-signal-chat-list';
+const ZEUS_CHANNEL_CHAT_LIST_PATCH = 'zeus-signal-chat-list-patch';
 const ZEUS_CHANNEL_SESSION_STATUS = 'zeus-session-status';
 const ZEUS_CHANNEL_MESSAGE_SENT = 'zeus-tweb-message-sent';
 
@@ -457,14 +458,29 @@ export function pushZeusChatList(): void {
         );
       }
 
+      // Phase 1：先发"骨架列表"（无 avatarDataUrl）。主进程 commitFullFriendList 会
+      //   1) 通过 mergeFriendListItem 保留上一轮已落盘头像（item.userAvatar 不会被空 raw 顶掉）
+      //   2) 通过 mergeFriendListAvatarCache 把磁盘上已存在的头像直接挂回 userAvatar
+      // 所以这一发 IPC 上去之后，渲染层看到的头像不会丢。
       sendSignalChatListPayload(items);
 
+      // Phase 2：avatar 用 zeus-signal-chat-list-patch + avatarOnly 增量发，
+      // 而不是再做一次全量列表 IPC（之前的写法每个 peer 都会引起一次 sameFriendListItemForPatch
+      // 比较从而触发渲染层 row 重渲，列表有可见抖动）。
+      // 主进程 avatarOnly 快速路径会跳过已落盘（item.userAvatar 已设置）的 peer，所以
+      // 同一个 dataUrl 不会被反复保存→反复 chat-list-avatar-patch。
       const dataUrls = await mapWithConcurrency(avatarUrls, ZEUS_AVATAR_FETCH_CONCURRENCY, fetchAvatarAsDataUrl);
+      const patchUpserts: Array<{ peerId: string; avatarDataUrl: string }> = [];
       dataUrls.forEach((dataUrl, i) => {
-        if (dataUrl) items[i].avatarDataUrl = dataUrl;
+        if (dataUrl) patchUpserts.push({ peerId: items[i].peerId, avatarDataUrl: dataUrl });
       });
-
-      sendSignalChatListPayload(items);
+      if (patchUpserts.length > 0) {
+        ipcRenderer.send(ZEUS_CHANNEL_CHAT_LIST_PATCH, {
+          upserts: patchUpserts,
+          deletes: [],
+          avatarOnly: true,
+        });
+      }
     } catch (_) {}
   })();
 }
