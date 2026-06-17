@@ -11,17 +11,17 @@ import {
   type ZeusBroadcastSendMessageToWebviewPayload,
   type ZeusBatchOperationToWebviewPayload,
 } from '../../../../packages/shared/src/zeus-webview-channels.ts';
-import { createZeusSignalSendMessage } from './zeusSignalBroadcastBridge.preload.js';
+import { createZeusSignalSendMessage } from './zeusSignalBroadcastBridge.preload.ts';
 import type { ConversationAttributesType } from '../model-types.d.ts';
-import { getRawAvatarPath, getLocalAvatarUrl } from '../util/avatarUtils.preload.js';
-import { SIGNAL_AVATAR_PATH } from '../types/SignalConversation.std.js';
-import type { AvatarColorType } from '../types/Colors.std.js';
-import { AvatarColorMap, AvatarColors } from '../types/Colors.std.js';
-import { migrateColor } from '../util/migrateColor.node.js';
-import { getInitials } from '../util/getInitials.std.js';
-import { getIdentifierHash } from '../Crypto.node.js';
-import { isAciString } from '../util/isAciString.std.js';
-import { isGroup, isMe } from '../util/whatTypeOfConversation.dom.js';
+import { getRawAvatarPath, getLocalAvatarUrl } from '../util/avatarUtils.preload.ts';
+import { SIGNAL_AVATAR_PATH } from '../types/SignalConversation.std.ts';
+import type { AvatarColorType } from '../types/Colors.std.ts';
+import { AvatarColorMap, AvatarColors } from '../types/Colors.std.ts';
+import { migrateColor } from '../util/migrateColor.node.ts';
+import { getInitials } from '../util/getInitials.std.ts';
+import { getIdentifierHash } from '../Crypto.node.ts';
+import { isAciString } from '../util/isAciString.std.ts';
+import { isGroup, isMe } from '../util/whatTypeOfConversation.dom.ts';
 
 // ---------------------------------------------------------------------------
 // window 扩展：Zeus preload 与 Signal 页面 bundle 协作挂载的字段（避免散落 as unknown as）

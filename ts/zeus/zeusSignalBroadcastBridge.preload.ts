@@ -6,8 +6,8 @@
  * 与 telegramk broadcast-bridge 对齐，支持 type: 'text' | 'image' | 'imageText' | 'file'。
  * peerId 即 conversationId；payload 含 type、text、imageDataUrl、caption 等。
  */
-import { isSignalConversation } from '../util/isSignalConversation.dom.js';
-import { processAttachment } from '../util/processAttachment.preload.js';
+import { isSignalConversation } from '../util/isSignalConversation.dom.ts';
+import { processAttachment } from '../util/processAttachment.preload.ts';
 
 function safeTrim(v: unknown): string {
   if (v == null) return '';
