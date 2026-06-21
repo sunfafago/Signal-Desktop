@@ -203,4 +203,34 @@ export default defineConfig([
       clearScreen: false,
     },
   },
+
+  // zeus-embed: the embedding host's main process require()s these node modules
+  // directly at runtime (signal-embed.ts createSignalSqlInstance loads
+  // ts/sql/main.main.js; the attachment protocol loads app/attachment_channel.main.js).
+  // v8 rolldown otherwise only emits to bundles/, so build them in-place from
+  // source as self-contained CJS, keeping @signalapp/* etc. external (via defaults).
+  {
+    ...defaults,
+    platform: 'node',
+    input: 'ts/sql/main.main.ts',
+    output: {
+      file: 'ts/sql/main.main.js',
+      format: 'cjs',
+      exports: 'named',
+      generatedCode: { symbols: false },
+      codeSplitting: false,
+    },
+  },
+  {
+    ...defaults,
+    platform: 'node',
+    input: 'app/attachment_channel.main.ts',
+    output: {
+      file: 'app/attachment_channel.main.js',
+      format: 'cjs',
+      exports: 'named',
+      generatedCode: { symbols: false },
+      codeSplitting: false,
+    },
+  },
 ]);
